@@ -1,0 +1,2 @@
+class MotionPlanner:
+    pass

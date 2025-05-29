@@ -1,0 +1,116 @@
+<mujoco model="scene">
+
+    <include file="../piper/piper_description.xml" />
+    <compiler angle="radian" autolimits="true" />
+    <!--    时间步长 2ms，隐式快速积分器，PGS（Projected Gauss-Seidel）求解器，标准重力加速度，摩擦模型用椭圆锥。  -->
+    <option timestep="0.002" integrator="implicitfast" solver="PGS" gravity="0 0 -9.82"
+            cone="elliptic">
+		<!--		 <flag multiccd="enable"/>-->
+    </option>
+    	<!-- 利用mujoco软件来调整Visualization->Free Camera->点击Align更新查看，需要在env代码里进行设置，不能自动启用 -->
+    <statistic center="1.8 1.1 1.7" extent="0.8" meansize="0.08" />
+    <visual>
+        <headlight diffuse="0.6 0.6 0.6" ambient="0.1 0.1 0.1" specular="0 0 0" />
+        <rgba haze="0.15 0.25 0.35 1" />
+
+		<!-- 利用mujoco软件来调整Visualization->Free Camera->点击Align更新查看，需要在env代码里进行设置，不能自动启用 -->
+		<global azimuth="210" elevation="-35" offheight="1280" offwidth="1280"/>
+    </visual>
+
+        <asset>
+            <!--        场景背景是一个蓝到黑渐变天空。地面是一个带灰色格线的深蓝棋盘格地面。地面反射率适中。-->
+            <!--    定义了一个天空盒 (skybox) 纹理。type="skybox" → 表示这是用来包裹整个场景背景的纹理。
+                    builtin="gradient" → 使用内置渐变纹理（从 rgb1 到 rgb2）
+                    rgb1="0.3 0.5 0.7" → 顶部颜色（偏天蓝）
+                    rgb2="0 0 0" → 底部颜色（黑色）  -->
+            <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512"
+                     height="3072" />
+            <!--    定义一个2D纹理，用于地面的方格棋盘效果。
+                    name="groundplane" → 给纹理起了个名字引用。
+                    builtin="checker" → 使用内置的棋盘格纹理。
+                    mark="edge" → 表示棋盘格会在方格边缘处加上markrgb指定颜色的线。
+                    rgb1 和 rgb2 → 棋盘格的两种颜色。
+                    markrgb="0.8 0.8 0.8" → 棋盘格线的颜色（灰白色）
+                    width 和 height → 定义纹理分辨率。
+            -->
+            <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4"
+                     rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
+            <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5"
+                      reflectance="0.2" />
+
+            <!--meshes-->
+            <mesh name ="table" file="../table/sigmund_table.stl" scale= "1 1 1"/>
+            <mesh name ="Apple" file="../fruit/Apple.STL" scale= "0.001 0.001 0.001"/>
+            <mesh name ="Banana" file="../fruit/Banana.STL" scale= "0.001 0.001 0.001"/>
+
+            <texture name="apple_tex" type="2d" file="../fruit/mesh/red-apple.png"/>
+            <material name="apple_mat" texture="apple_tex"/>
+            <texture name="banana_tex" type="2d" file="../fruit/mesh/yellow-banana.png"/>
+            <material name="banana_mat" texture="banana_tex"/>
+        </asset>
+        <worldbody>
+            <!--  定义仿真世界中的所有物体、光源、相机、参考坐标轴、工作区域等，确定它们的形状、位置、姿态、颜色和物理属性。-->
+            <!--定义了一个方向光-->
+            <light pos="1.3 0.7 2.5" dir="0 0 -1" directional="true" />
+            <!-- 定义一个无厚度、无限延展的平面地面，材质引用前面定义的 groundplane，带棋盘格纹理。 -->
+            <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" />
+            <geom name="x-aixs" group="2" type="cylinder" contype="0" conaffinity="0"
+                fromto="0 0 0 1 0 0" size="0.01" rgba="1 0 0 1" />
+            <geom name="y-aixs" group="2" type="cylinder" contype="0" conaffinity="0"
+                fromto="0 0 0 0 1 0" size="0.01" rgba="0 1 0 1" />
+            <geom name="z-aixs" group="2" type="cylinder" contype="0" conaffinity="0"
+                fromto="0 0 0 0 0 1" size="0.01" rgba="0 0 1 1" />
+            <!--定义固定相机，位于 (0.85, 0.8, 1.6)，朝向自定义，视角便于观察操作区。-->
+            <camera name="cam" pos="0.85 0.8 1.6" xyaxes="0 -1 0 1 0 0.5" mode="fixed" />
+
+            <body name="mocap" mocap="true" pos="0.8 0.6 0.74">
+			    <geom name="mocap" type="sphere" size="0.000001"/>
+		    </body>
+
+            <!-- <body name="Apple" pos="1.4 0.8 0.9" quat="0 1 0 0"> -->
+            <body name="Apple" pos="1.4 0.6 0.9" quat="0.7071 0.7071 0 0">
+                <joint name="Apple_joint" type="free" damping="0.1"/>
+                <geom name="Apple" type="mesh" mesh="Apple" material="apple_mat" />
+            </body>
+
+            <body name="Banana" pos="1.2 0.7 0.9" quat="0 1 0 0">
+                <joint name="Banana_joint" type="free" damping="0.1"/>
+                <geom name="Banana" type="mesh" mesh="Banana" material="banana_mat" />
+            </body>
+
+            <body name="Box" pos="1.4 0.8 0.9" quat="1 0 0 0">
+                <joint name="Box" type="free" />
+                <geom name="Box" type="box" size="0.025 0.025 0.025" rgba="1 0 1 1" condim="6"/>
+            </body>
+
+            <body name="T_block" pos="1.3 1.0 0.9" quat="1 0 0 0">
+                <joint name="T_block" type="free" />
+                <geom name="T_block_pt1" type="box" size="0.06 0.02 0.025" rgba="0 0.62 1 1" condim="6"/>
+                <geom name="T_block_pt2" type="box" size="0.02 0.06 0.025" pos="0.08 0 0" rgba="0 0.62 1 1" condim="6"/>
+            </body>
+            <!--Zones-->
+            <!--       抓取区域     -->
+            <body name="zone_pickup" pos="1.4 0.6 0.73" quat="1 0 0 0">
+                <geom name="zone_pickup" type="box" size="0.2 0.6 0.01" rgba="0 1 0 0.1" contype="0" conaffinity="0"/>
+            </body>
+            <!--       放置区域     -->
+            <body name="zone_drop" pos="0.2 0.2 0.73" quat="1 0 0 0">
+                <geom name="zone_drop" type="box" size="0.2 0.2 0.01" rgba="1 0 0 0.1" contype="0" conaffinity="0"/>
+            </body>
+
+            <!--table -->
+            <body name = "table1" euler="0 0 0" pos= "0.8 0 0.74" >
+              <geom name = "table1" type="mesh" mesh="table" group="2" rgba="0.35 0.35 0.35 1" mass="0" contype="0" conaffinity="0"/>
+            </body>
+
+            <body name = "table2" euler="0 0 0" pos= "1.6 0 0.74" >
+              <geom name = "table2" type="mesh" mesh="table" group="2" rgba="0.35 0.35 0.35 1" mass="0" contype="0" conaffinity="0"/>
+            </body>
+
+            <body name="simple_table" pos="0.8 0.6 0.69" quat="1 0 0 0">
+                <geom name="simple_table" type="box" size="0.8 0.6 0.05" rgba="0.5 0.5 0.5 0.1"/>
+            </body>
+        </worldbody>
+
+
+</mujoco>

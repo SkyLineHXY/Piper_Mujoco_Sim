@@ -1,0 +1,3 @@
+[submodule "graspnet-baseline"]
+	path = graspnet-baseline
+	url = git@github.com:graspnet/graspnet-baseline.git
