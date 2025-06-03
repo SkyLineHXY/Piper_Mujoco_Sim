@@ -1,8 +1,5 @@
 import os.path
 import sys
-import cv2
-import copy
-from typing import overload
 
 # import mujoco_py
 import spatialmath as sm
@@ -11,7 +8,7 @@ from multipledispatch import dispatch
 # from mujoco_py import load_model_from_path, MjSim
 from manipulator_grasp.arm.geometry import SE3Impl
 import numpy as np
-
+import casadi
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 import mujoco
@@ -19,6 +16,10 @@ import mujoco.viewer
 from scipy.optimize import least_squares
 from manipulator_grasp.arm.robot import Robot
 import pinocchio as pin
+# from pinocchio import casadi as cpin
+from transformations import quaternion_from_euler, euler_from_quaternion
+
+from pinocchio import casadi as cpin
 import threading
 ROOT_DIR =os.path.dirname(os.path.abspath(__file__))
 
@@ -33,38 +34,222 @@ sys.path.append(os.path.join(ROOT_DIR, 'manipulator_grasp'))
 # 逆运动学求解器（使用 Pinocchio）
 # ------------------------------
 parent_dir = '/home/zzq/Desktop/jichuan/YOLO_World-SAM-GraspNet/Kinova7DoF-MuJoCo'
+class IKSolver:
+    def __init__(self, urdf_path: str):
+        self.model = pin.buildModelFromUrdf(urdf_path)
+        self.data = self.model.createData()
+        # 获取末端执行器的 Frame ID（假设 URDF 中定义了名为 'grasp_link' 的框架）
+        self.frame_id = self.model.getFrameId("grasp_link")
+        # 关节上下限，用于设置优化约束
+        self.lower = self.model.lowerPositionLimit
+        self.upper = self.model.upperPositionLimit
+        # 创建 CasADi 版的 Pinocchio 模型和数据，用于符号化计算
+        self.cmodel = cpin.Model(self.model)
+        self.cdata = self.cmodel.createData()
+
+    def solve(self, qpos, target_pose:pin.SE3):
+        """
+        求解逆运动学：
+        - qpos: 当前关节角向量 (长度 7 或 8)
+        - target_pose: 目标末端姿态，pinocchio.SE3 类型
+        返回优化后的 8 维关节角向量 joint_ctrl。
+        """
+        # 转换为 numpy 数组
+        qpos = np.array(qpos).flatten()
+        qpos = np.array(qpos).flatten()
+        nq=8
+        if qpos.size == nq:
+            q_init = qpos.copy()
+        elif qpos.size == nq - 1:
+            q_init = np.zeros(nq)
+            q_init[:nq - 1] = qpos
+            q_init[-1] = q_init[-2]*-1  # 假设第8维为 prismatic 关节，初始为0
+        else:
+            raise ValueError(f"qpos 维度应为 {nq} 或 {nq - 1}，但收到 {qpos.size}")
+
+        # 构造目标位姿的 CasADi SE3 常量
+        R_casadi = casadi.SX(target_pose.rotation)
+        p_casadi = casadi.SX(target_pose.translation)
+        target_casadi = cpin.SE3(R_casadi, p_casadi)
+        # 创建 CasADi 优化变量
+        opti = casadi.Opti()
+        # 使用 SX 符号变量替代 MX 变量
+        q_sx = casadi.SX.sym('q', nq)  # 改为 SX 类型变量
+        cpin.framesForwardKinematics(self.cmodel, self.cdata, q_sx)
+        # 计算末端当前位姿到目标位姿的相对变换，并取 6D 对数误差
+        err = cpin.log6(self.cdata.oMf[self.frame_id].inverse() * target_casadi).vector
+        reg_coeff = 1e-3
+        cost_sx = casadi.sumsqr(err) + reg_coeff * casadi.sumsqr(q_sx - q_init)
+        cost_func = casadi.Function("cost_func", [q_sx], [cost_sx])
+        q_var = opti.variable(nq)
+        cost = cost_func(q_var)
+        opti.minimize(cost)
+
+        # 关节上下限约束
+        for i in range(nq):
+            opti.subject_to(q_var[i] >= self.lower[i])
+            opti.subject_to(q_var[i] <= self.upper[i])
+        # 初始值
+        opti.set_initial(q_var, q_init)
+        # 选择求解器
+        opti.solver("ipopt")
+        # 尝试求解
+        try:
+            sol = opti.solve()
+            if sol.stats()["success"]:
+                q_sol = sol.value(q_var)
+            else:
+                print("IK 求解失败，返回初始关节角")
+                q_sol = q_init
+        except RuntimeError as e:
+            # 求解失败时，输出警告并返回初值
+            print("IK 求解失败，返回初始关节角：", e)
+            # print("当前变量值：", opti.debug.value(q_var))
+            q_sol = q_init
+        # 确保返回的是一维数组
+        joint_ctrl = np.array(q_sol).flatten()
+        return joint_ctrl
+    def forward_kinematics(self, q):
+
+        if len(q) == 7 and isinstance(q,list):
+            q.append(q[-1]*-1)
+            q = np.asarray(q, dtype=np.float64)
+        elif isinstance(q,np.ndarray):
+            if len(q) == 7:
+                q = q.tolist()
+                q.append(q[-1]*-1)
+                q = np.asarray(q, dtype=np.float64)
+        pin.forwardKinematics(self.model, self.data, q)
+        pin.updateFramePlacements(self.model, self.data)
+        return self.data.oMf[self.frame_id]
 class IKOptimizer:
     def __init__(self, urdf_path: str, ee_frame_name: str = 'grasp_link'):
         self.robot = pin.RobotWrapper.BuildFromURDF(urdf_path,package_dirs=[parent_dir])
         self.model = self.robot.model
         self.collision_model = self.robot.collision_model
 
-        self.collision_model.addAllCollisionPairs()
-        # for i in range(4, 9):
-        #     for j in range(0, 3):
-        #         self.collision_model.addCollisionPair(pin.CollisionPair(i, j))
+        # self.collision_model.addAllCollisionPairs()
+        for i in range(4, 9):
+            for j in range(0, 3):
+                self.collision_model.addCollisionPair(pin.CollisionPair(i, j))
         self.geometry_data = pin.GeometryData(self.collision_model)
         self.visual_model = self.robot.visual_model
         self.ee_frame_name = ee_frame_name
         self.ee_frame_id =  self.model.getFrameId(self.ee_frame_name)
         self.data = self.model.createData()
 
-        self.q_current = np.zeros(8)  # 初始关节角度
         self.target_translation = np.array([0.155, 0.0, 0.222])  # ✅ 更新初始末端位置
 
+
+
+        q = quaternion_from_euler(0, 0, 0)
+        self.model.addFrame(
+            pin.Frame('ee',
+                      self.model.getJointId('joint6'),
+                      pin.SE3(
+                          # pin.Quaternion(1, 0, 0, 0),
+                          pin.Quaternion(q[3], q[0], q[1], q[2]),
+                          np.array([0.0, 0.0, 0.1]),
+                      ),
+                      pin.FrameType.OP_FRAME)
+        )#末端姿态
+        self.gripper_id = self.model.getFrameId("ee")
+        self.q_current = np.zeros(8)  # 初始关节角度
+        self.q_current[0]=0.5
+        # Creating Casadi models and data for symbolic computing
+        self.cmodel = cpin.Model(self.model)
+        self.cdata = self.cmodel.createData()
+
+        self.cq = casadi.SX.sym("q", self.model.nq, 1)
+        self.cTf = casadi.SX.sym("tf", 4, 4)
+
+        self.error = casadi.Function(
+            "error",
+            [self.cq, self.cTf],
+            [
+                casadi.vertcat(
+                    cpin.log6(
+                        self.cdata.oMf[self.gripper_id].inverse() * cpin.SE3(self.cTf)
+                    ).vector,
+                )
+            ],
+        )
+        self.opti = casadi.Opti()
+        self.var_q = self.opti.variable(self.model.nq)
+        self.param_tf = self.opti.parameter(4, 4)
+        self.totalcost = casadi.sumsqr(self.error(self.var_q, self.param_tf))
+        self.regularization = casadi.sumsqr(self.var_q)
+        # Setting optimization constraints and goals
+        self.opti.subject_to(self.opti.bounded(
+            self.model.lowerPositionLimit,
+            self.var_q,
+            self.model.upperPositionLimit)
+        )
+        self.opti.minimize(20 * self.totalcost + 0.01 * self.regularization)
+        opts = {
+            'ipopt': {
+                'print_level': 0,
+                'max_iter': 50,
+                'tol': 1e-4
+            },
+            'print_time': False
+        }
+        self.opti.solver("ipopt", opts)
     def objective(self, q, target_pose):
         current_pose = self.forward_kinematics(q)
         error = pin.log(current_pose.inverse() * target_pose)
         return error
 
-    def forward_kinematics(self, q:list):
-        q = np.asarray(q, dtype=np.float64)
+    def forward_kinematics(self, q):
+
+        if len(q) == 7 and isinstance(q,list):
+            q.append(q[-1]*-1)
+            q = np.asarray(q, dtype=np.float64)
+        elif isinstance(q,np.ndarray):
+            if len(q) == 7:
+                q = q.tolist()
+                q.append(q[-1]*-1)
+                q = np.asarray(q, dtype=np.float64)
         pin.forwardKinematics(self.robot.model, self.data, q)
         pin.updateFramePlacements(self.robot.model, self.data)
         return self.data.oMf[self.ee_frame_id]
+    def ik_fun_agelix(self,target_pose,q0):
+        if len(q0) == 7 and isinstance(q0,np.ndarray):
+            q0 = q0.tolist()
+            q0.append(q0[-1]*-1)
+            q0 = np.asarray(q0, dtype=np.float64)
+
+        self.init_data = q0
+
+        self.opti.set_initial(self.var_q, self.init_data)
+        self.opti.set_value(self.param_tf, casadi.DM(target_pose.homogeneous))
+        try:
+            sol = self.opti.solve_limited()
+            sol_q = self.opti.value(self.var_q)
+            max_diff = max(abs(self.q_current - sol_q))
+            if max_diff > 15.0 / 180.0 * 3.1415:
+                # print("Excessive changes in joint angle:", max_diff)
+                self.init_data = np.zeros(8)
+            # print("max_diff:", max_diff)
+            # q = sol_q
+            # if max_diff > 30.0/180.0*3.1415:
+            #     # print("Excessive changes in joint angle:", max_diff)
+            #     self.init_data = np.zeros(8)
+            # else:
+            #     self.init_data = sol_q
+            # self.q_current = sol_q
+        except Exception as e:
+            print(f"ERROR in convergence, plotting debug info.{e}")
+            return sol_q, '', False
+        # self.q_current = sol_q
+        return sol_q
+
     def solve(self, target_pose, q0):
-        # lb = [-2.618,0,-2.967,-1.745,-1.22,-2.0944,0,-0.035]
-        # ub = [2.168,3.14,0,1.745,1.22,2.0944,0.035,0]
+        if len(q0) == 7 and isinstance(q0,np.ndarray):
+            q0 = q0.tolist()
+            q0.append(q0[-1]*-1)
+            q0 = np.asarray(q0, dtype=np.float64)
+
         lb = np.full_like(q0, -3.14)
         ub = np.full_like(q0, 3.14)
         res = least_squares(self.objective, q0, args=(target_pose,), bounds=(lb, ub))
@@ -75,10 +260,12 @@ class PiperGraspEnv:
         # 初始化 MuJoCo 模型和数据
         # filename = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'scenes', 'scene_piper.xml')
 
-        mj_filename = '/home/zzq/Desktop/jichuan/YOLO_World-SAM-GraspNet/Kinova7DoF-MuJoCo/piper_description/mujoco_model/scene_piper.xml'
-        urdf_path = '/home/zzq/Desktop/jichuan/YOLO_World-SAM-GraspNet/Kinova7DoF-MuJoCo/piper_description/urdf/piper_description.urdf'
-        self.ik_solver = IKOptimizer(urdf_path, ee_frame_name='grasp_link')
-
+        # mj_filename = '/home/zzq/Desktop/jichuan/YOLO_World-SAM-GraspNet/Kinova7DoF-MuJoCo/piper_description/mujoco_model/scene_piper.xml'
+        # urdf_path = '/home/zzq/Desktop/jichuan/YOLO_World-SAM-GraspNet/Kinova7DoF-MuJoCo/piper_description/urdf/piper_description.urdf'
+        mj_filename = '/home/zzq/Desktop/jichuan/YOLO_World-SAM-GraspNet/manipulator_grasp/assets/scenes/scene_grasp.xml'
+        urdf_path = '/home/zzq/Desktop/jichuan/YOLO_World-SAM-GraspNet/manipulator_grasp/assets/agilex_piper/piper_description/urdf/piper_description.urdf'
+        # self.ik_solver = IKOptimizer(urdf_path, ee_frame_name='grasp_link')
+        self.ik_solver = IKSolver(urdf_path)
         self.mj_model = mujoco.MjModel.from_xml_path(mj_filename)
         self.mj_data = mujoco.MjData(self.mj_model)
 
@@ -107,7 +294,7 @@ class PiperGraspEnv:
             [-0.05494111, 0.99848793, -0.001826],
             [-0.7585, -0.0429297, -0.65016378]
         ])
-        self.q_current = np.array([0,1.128,-1.327,0,1.636,0,0,0])# 初始关节角度
+        self.q_current = np.array([0,1.128,-1.327,0,1.636,0,0])# 初始关节角度
         # self.mj_data.qpos[:8] = self.q_current
         # self.q_current = np.zeros(8)  # 初始关节角度
         # 更新渲染器中的场景数据
@@ -181,7 +368,8 @@ class PiperGraspEnv:
             raise TypeError("Invalid arguments for move_to_position_no_planner")
 
         target_pose = pin.SE3(target_rotation, target_translation)
-        q_new = self.ik_solver.solve(target_pose, self.q_current)[:6]
+        q_new = self.ik_solver.solve(self.q_current,target_pose)[:6]
+        # q_new = self.ik_solver.solve(target_pose, self.q_current)[:6]
 
         self.q_current[:6] = q_new
         self.step(self.q_current)
@@ -327,7 +515,7 @@ class PiperGraspEnv:
         """
             获取当前机械臂关节状态
         """
-        return self.mj_data.qpos[:8]
+        return self.mj_data.qpos[:7]
     def get_end_pose(self):
         """
             获取当前末端位姿
@@ -335,8 +523,8 @@ class PiperGraspEnv:
         pose = self.ik_solver.forward_kinematics(self.mj_data.qpos[:8])
         print(pose)
     def gripper_control(self,gripper_W: float):
-        self.q_current[-1] = -gripper_W
-        self.q_current[-2] = gripper_W
+        self.q_current[-1] = gripper_W
+        # self.q_current[-1] = gripper_W
         self.step(self.q_current)
     def run_circle_trajectory(self, center, radius, angular_speed, duration):
         #TODO
