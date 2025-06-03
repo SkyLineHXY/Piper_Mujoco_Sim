@@ -162,7 +162,7 @@ def generate_grasps(end_points, cloud, visual=False):
     # 将 gg 转换为普通列表
     all_grasps = list(gg)
     vertical = np.array([0, 0, 1])  # 期望抓取接近方向（垂直桌面） np.array([0, 0, 1])
-    angle_threshold = np.deg2rad(30)  # 30度的弧度值 np.deg2rad(30)
+    angle_threshold = np.deg2rad(20)  # 30度的弧度值 np.deg2rad(30)
     filtered = []
     for grasp in all_grasps:
         # 抓取的接近方向取 grasp.rotation_matrix 的第三列[:, 0]
@@ -175,15 +175,15 @@ def generate_grasps(end_points, cloud, visual=False):
             filtered.append(grasp)
     if len(filtered) == 0:
         print("\n[Warning] No grasp predictions within vertical angle threshold. Using all predictions.")
-        pass
+        return None
     else:
         filtered.sort(key=lambda g: g.score, reverse=True)
         # 取前20个抓取（如果少于20个，则全部使用）
-        top_grasps = filtered[:20]
+        # top_grasps = filtered[:20]
         # 可视化过滤后的抓取，手动转换为 Open3D 物体
-        grippers = [g.to_open3d_geometry() for g in top_grasps]
+        grippers = [g.to_open3d_geometry() for g in filtered]
         # 选择得分最高的抓取（filtered 列表已按得分降序排序）
-        best_grasp = top_grasps[0]
+        best_grasp = filtered[0]
         best_translation = best_grasp.translation
         best_rotation = best_grasp.rotation_matrix
         best_width = best_grasp.width
@@ -191,7 +191,7 @@ def generate_grasps(end_points, cloud, visual=False):
         new_gg = GraspGroup()  # 初始化空的 GraspGroup
         new_gg.add(best_grasp)  # 添加最佳抓取
         if visual:
-            grippers = new_gg.to_open3d_geometry_list()
+            # grippers = gg.to_open3d_geometry_list()
             o3d.visualization.draw_geometries([cloud, *grippers])
         return new_gg
 
@@ -210,7 +210,7 @@ def execute_grasp(env:piper_grasp_env.PiperGraspEnv, gg:GraspGroup):
     # 目标：计算抓取位姿 T_wo（物体相对于世界坐标系的位姿）
     n_wc = np.array([0.0, -1.0, 0.0])
     o_wc = np.array([-1.0, 0.0, -0.5])
-    t_wc = np.array([0.85, 0.8, 1.6])
+    t_wc = np.array([1.15,0.6,1.6])
     T_wc = sm.SE3.Trans(t_wc) * sm.SE3(sm.SO3.TwoVectors(x=n_wc, y=o_wc))
     T_co = sm.SE3.Trans(gg.translations[0]) * sm.SE3(sm.SO3.TwoVectors(x=gg.rotation_matrices[0][:, 0], y=gg.rotation_matrices[0][:, 1]))
 
@@ -221,14 +221,14 @@ def execute_grasp(env:piper_grasp_env.PiperGraspEnv, gg:GraspGroup):
     T_wr = sm.SE3.Trans(t_wr) * sm.SE3(sm.SO3.TwoVectors(x=n_wr, y=o_wr))
     T_wr_inv = T_wr.inv()
     #T_base^gg=T_world^cam *T_cam^gg*T_base^world
-    T_bo = T_wr_inv * T_wc * T_co * sm.SE3.Rz(np.pi / 2) * sm.SE3.Rx(np.pi / 2) * sm.SE3.Rz(np.pi / 2)
-    action = np.zeros(8)
+    T_bo = T_wr_inv * T_wc * T_co * sm.SE3.Rz(np.pi / 2) * sm.SE3.Rx(np.pi / 2) * sm.SE3.Rz(-np.pi / 2)
+    action = np.zeros(7)
 
     # 1.机器人运动到预抓取位姿
     # 目标：将机器人从当前位置移动到预抓取姿态（q1）
     time1 = 2
     q0 = env.get_joint()
-    q1 = np.array([0.0,1.2027,-1.326217,-0.0,1.631054,-0.00894,gripper_maxW,-gripper_maxW])
+    q1 = np.array([0.0,1.2027,-1.326217,-0.0,1.631054,-0.00894,gripper_maxW])
 
     parameter0 = JointParameter(q0, q1)
     velocity_parameter0 = QuinticVelocityParameter(time1)
@@ -251,7 +251,7 @@ def execute_grasp(env:piper_grasp_env.PiperGraspEnv, gg:GraspGroup):
                     env.step(joint)
     time2 = 1
     env.set_piper_qpos(q1)
-    T1 = env.ik_solver.forward_kinematics(q1)
+    T1 = env.ik_solver.forward_kinematics(q1.tolist())
     T1 = sm.SE3(T1.homogeneous)
     # T1 = sm.SE3(T1.rotation,T1.translation)
     T2 = T_bo * sm.SE3(0.0, 0.0, -0.1)
@@ -315,13 +315,16 @@ def execute_grasp(env:piper_grasp_env.PiperGraspEnv, gg:GraspGroup):
     gripper_W = gripper_maxW
     for i in range(1000):
         gripper_W -= 0.00003
-        gripper_W = np.max([gripper_W, gg.widths*gripper_maxW])
+        if gripper_W <= 0.0:
+            gripper_W = 0
+
+        # gripper_W = np.max(gripper_W, np.max(gg.widths*gripper_maxW))
         env.gripper_control(gripper_W)
 
     # 4.提起物体
     # 目标：抓取后垂直提升物体（避免碰撞桌面）。
     time4 = 1
-    T4 = sm.SE3.Trans(0.0, 0.0, 0.3) * T3 # 通过在T3的基础上向上偏移0.3单位得到的，用于控制机器人上升一定的高度
+    T4 = sm.SE3.Trans(0.0, 0.0, 0.2) * T3 # 通过在T3的基础上向上偏移0.3单位得到的，用于控制机器人上升一定的高度
     position_parameter3 = LinePositionParameter(T3.t, T4.t)
     attitude_parameter3 = OneAttitudeParameter(sm.SO3(T3.R), sm.SO3(T4.R))
     cartesian_parameter3 = CartesianParameter(position_parameter3, attitude_parameter3)
@@ -351,9 +354,11 @@ def execute_grasp(env:piper_grasp_env.PiperGraspEnv, gg:GraspGroup):
     trajectory_parameter6 = TrajectoryParameter(cartesian_parameter6, velocity_parameter6)
     planner6 = TrajectoryPlanner(trajectory_parameter6)
 
-    # 执行planner_array = [planner4, planner5, planner6]
-    time_array = [0.0, time4, time5, time6]
-    planner_array = [planner4, planner5, planner6]
+    # # 执行planner_array = [planner4, planner5, planner6]
+    # time_array = [0.0, time4, time5, time6]
+    time_array = [0.0,time4]
+    planner_array = [planner4]
+    # planner_array = [planner4, planner5, planner6]
     total_time = np.sum(time_array)
     time_step_num = round(total_time / 0.002) + 1
     times = np.linspace(0.0, total_time, time_step_num)
@@ -382,8 +387,7 @@ if __name__ == '__main__':
     # while True:
     #     env.step()
     n = 4 # 循环次数，连续抓取物体
-    for _ in range(n):
-
+    while True:
         # 1. 获取图像和深度图
         imgs = env.render()
         color_img_path = imgs['img'] # MuJoCo 渲染的是 RGB
@@ -396,9 +400,11 @@ if __name__ == '__main__':
         end_points, cloud_o3d = get_and_process_data(color_img_path, depth_img_path, mask_img_path)
         # 4. 获取抓取点对应的夹爪姿态
         gg = generate_grasps(end_points, cloud_o3d, True) # True or False
-
-        # 5. 仿真执行抓取
-        execute_grasp(env, gg)
+        if gg is None:
+            print('no grasps pose')
+        else:
+            # 5. 仿真执行抓取
+            execute_grasp(env, gg)
     env.close()
     # net = get_net()
     # env = piper_grasp_env.PiperGraspEnv()
