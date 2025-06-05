@@ -289,9 +289,6 @@ if __name__ == '__main__':
     env.reset()
     for i in range(500):  # 1000
         env.step()
-    # while True:
-    #     env.step()
-    n = 4 # 循环次数，连续抓取物体
     while True:
         # 1. 获取图像和深度图
         imgs = env.render()
