@@ -4,7 +4,7 @@ import random
 import numpy as np
 from spatialmath import SE3, SO3
 
-from arm.geometry import Ellipsoid
+from manipulator_grasp.arm.geometry import Ellipsoid
 
 from .node import Node
 from .rrt_map import RRTMap

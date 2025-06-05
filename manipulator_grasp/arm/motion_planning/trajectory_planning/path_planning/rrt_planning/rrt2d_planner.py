@@ -7,7 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from spatialmath import SO3, SE3
 
-from arm.geometry import UnitVector, LineSegment, Circle2D, Distance2D, Collision2D
+from manipulator_grasp.arm.geometry import UnitVector, LineSegment, Circle2D, Distance2D, Collision2D
 from .node import Node
 from ..cartesian_planning import CartesianParameter, CartesianPlanner, LinePositionParameter, OneAttitudeParameter
 

@@ -4,8 +4,8 @@ import multiprocessing
 from typing import Union, List, Tuple
 from functools import partial
 
-from arm.geometry import LineSegment, Collision
-from arm.robot import Robot
+from manipulator_grasp.arm.geometry import LineSegment, Collision
+from manipulator_grasp.arm.robot import Robot
 
 from .check_collision import CheckCollision
 

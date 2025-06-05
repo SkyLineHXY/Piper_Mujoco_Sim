@@ -8,7 +8,7 @@ from .i_check_collision import ICheckCollision
 
 from .rrt_parameter import RRTParameter
 from .check_collision_robot import CheckCollisionRobot
-from arm.robot import Robot
+from manipulator_grasp.arm.robot import Robot
 
 
 class RobotRRTParameter(RRTParameter):

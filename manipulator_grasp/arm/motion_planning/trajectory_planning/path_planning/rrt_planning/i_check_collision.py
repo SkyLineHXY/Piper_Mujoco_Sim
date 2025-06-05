@@ -1,7 +1,7 @@
 import abc
 import multiprocessing
 
-from arm.geometry import LineSegment
+from manipulator_grasp.arm.geometry import LineSegment
 
 
 class ICheckCollision(abc.ABC):

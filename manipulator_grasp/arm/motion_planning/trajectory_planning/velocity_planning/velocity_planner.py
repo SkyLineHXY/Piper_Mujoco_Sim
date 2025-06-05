@@ -1,4 +1,4 @@
-from arm.interface import StrategyWrapper
+from manipulator_grasp.arm.interface import StrategyWrapper
 
 
 class VelocityPlanner(StrategyWrapper):

@@ -1,6 +1,6 @@
 from abc import ABC
 
-from arm.interface import Parameter
+from manipulator_grasp.arm.interface import Parameter
 
 
 class AttitudeParameter(Parameter, ABC):

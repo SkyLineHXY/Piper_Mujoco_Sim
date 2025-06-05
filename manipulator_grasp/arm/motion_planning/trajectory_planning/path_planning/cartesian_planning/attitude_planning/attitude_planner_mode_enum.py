@@ -1,5 +1,5 @@
 from enum import unique
-from arm.interface import ModeEnum
+from manipulator_grasp.arm.interface import ModeEnum
 
 
 @unique

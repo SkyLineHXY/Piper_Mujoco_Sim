@@ -4,7 +4,7 @@ from typing import overload, Union, Iterable
 
 import numpy as np
 
-from arm.geometry import Point
+from manipulator_grasp.arm.geometry import Point
 
 
 class Node:

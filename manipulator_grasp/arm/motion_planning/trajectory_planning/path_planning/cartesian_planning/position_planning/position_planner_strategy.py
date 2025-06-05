@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from arm.interface import Strategy
+from manipulator_grasp.arm.interface import Strategy
 
 from .position_parameter import PositionParameter
 

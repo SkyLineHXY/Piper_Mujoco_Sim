@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-from arm.geometry import UnitVector, LineSegment, Distance, Collision
+from manipulator_grasp.arm.geometry import UnitVector, LineSegment, Distance, Collision
 
 from .node import Node
 from .rrt_map import RRTMap

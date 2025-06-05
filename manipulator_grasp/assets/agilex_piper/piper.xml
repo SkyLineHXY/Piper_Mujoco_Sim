@@ -9,7 +9,7 @@
       <position inheritrange="1" forcerange="-100 100"/>
       <default class="finger">
         <joint frictionloss="0" type="slide"/>
-        <position forcerange="-5000 5000"/>
+        <position forcerange="-10 10"/>
 <!--        <geom friction="10.0 0.005 0.0001"-->
 <!--        condim="4"/>-->
       </default>
@@ -125,7 +125,7 @@
 
   <worldbody>
     <light name="spotlight" mode="targetbodycom" target="link8" pos="0 0 1"/>
-    <body name="piper" pos="1 0.6 0.745" quat="1 0 0 0">
+    <body name="piper" pos="0.94 0.6 0.745" quat="1 0 0 0">
     <body name="base_link" childclass="piper" gravcomp="1">
       <inertial pos="-0.00979275 1.82906e-06 0.04101" quat="0.692988 -0.137524 -0.137826 0.69416" mass="0.162549"
         diaginertia="0.000269445 0.000227478 0.000221437"/>
@@ -238,9 +238,9 @@
                   <body name="link7" pos="0 0 0.13503" quat="1.89468e-08 1.89469e-08 0.707108 0.707105" gravcomp="1">
                     <inertial pos="-0.000277778 -0.0467673 -0.00921029" quat="0.46134 0.536174 -0.553273 0.439968"
                       mass="0.0264823" diaginertia="0.001 0.001 0.001"/>
-                    <joint name="joint7" axis="0 0 -1" class="finger" range="0 0.035" frictionloss="0.01"/>
+                    <joint name="joint7" axis="0 0 -1" class="finger" range="0 0.035"/>
                     <geom mesh="link7" material="gray_mat" class="visual"/>
-                    <geom type="box" size="0.015 0.036 0.002" pos="0 -0.036 -0.0025" rgba="1 1 0 1" class="collision" friction="10.0 0.001 0.0001"   condim="4"/>
+                    <geom type="box" size="0.012 0.036 0.002" pos="0 -0.036 -0.0025" rgba="1 1 0 1" class="collision" friction="100.0 0.1 0.1"   condim="6"/>
 <!--                    <geom type="box" size=".015 .015 .0025" pos="0 -0.045 -0.0025" rgba="0 0 1 .2" class="collision"-->
 <!--                          friction="1.0 0.005 0.0001" solimp="0.95 0.99 0.001" solref="0.004 1"/>-->
 
@@ -248,9 +248,9 @@
                   <body name="link8" pos="0 0 0.13503" quat="1.89468e-08 -1.89469e-08 -0.707108 0.707105" gravcomp="1">
                     <inertial pos="0.000277817 0.0467674 -0.0092103" quat="0.553273 0.439968 -0.46134 0.536174"
                       mass="0.0264822" diaginertia="0.001 0.001 0.001"/>
-                    <joint name="joint8" axis="0 0 1" class="finger" range="-0.035 0" frictionloss="0.01"/>
+                    <joint name="joint8" axis="0 0 1" class="finger" range="-0.035 0"/>
                     <geom mesh="link8" material="gray_mat" class="visual"/>
-                    <geom type="box" size="0.015 0.036 0.002" pos="0 0.036 -0.0025" rgba="1 1 0 1" class="collision" friction="10.0 0.001 0.0001"   condim="4"/>
+                    <geom type="box" size="0.012 0.036 0.002" pos="0 0.036 -0.0025" rgba="1 0 0 1" class="collision" friction="100.0 1 1"   condim="6"/>
                   </body>
                 </body>
               </body>

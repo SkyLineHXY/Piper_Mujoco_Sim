@@ -1,4 +1,4 @@
-from arm.interface import ModeEnum
+from manipulator_grasp.arm.interface import ModeEnum
 from ..velocity_parameter import VelocityParameter
 from ..velocity_planning_mode_enum import VelocityPlanningModeEnum
 

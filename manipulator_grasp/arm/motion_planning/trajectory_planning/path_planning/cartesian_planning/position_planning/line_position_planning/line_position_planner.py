@@ -1,6 +1,6 @@
 import numpy as np
 
-from arm.interface import ModeEnum
+from manipulator_grasp.arm.interface import ModeEnum
 from ..position_planning_mode_enum import PositionPlanningModeEnum
 from ..position_planner_strategy import PositionPlannerStrategy
 

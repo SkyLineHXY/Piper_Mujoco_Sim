@@ -1,5 +1,6 @@
 import os.path
 import sys
+from manipulator_grasp.arm.motion_planning import *
 
 # import mujoco_py
 import spatialmath as sm
@@ -47,6 +48,43 @@ class IKSolver:
         self.cmodel = cpin.Model(self.model)
         self.cdata = self.cmodel.createData()
 
+        self.cq = casadi.SX.sym("q", self.model.nq, 1)
+        self.cTf = casadi.SX.sym("tf", 4, 4)
+        cpin.framesForwardKinematics(self.cmodel, self.cdata, self.cq)
+        self.error = casadi.Function(
+            "error",
+            [self.cq, self.cTf],
+            [
+                casadi.vertcat(
+                    cpin.log6(
+                        self.cdata.oMf[self.frame_id].inverse() * cpin.SE3(self.cTf)
+                    ).vector,
+                )
+            ],
+        )
+        # Defining the optimization problem
+        self.opti = casadi.Opti()
+        self.var_q = self.opti.variable(self.model.nq)
+        self.param_tf = self.opti.parameter(4,4)
+        self.totalcost = casadi.sumsqr(self.error(self.var_q,self.param_tf))
+        self.regularization = casadi.sumsqr(self.var_q)
+        self.opti.subject_to(self.opti.bounded(
+            self.model.lowerPositionLimit,
+            self.var_q,
+            self.model.upperPositionLimit)
+        )
+        print("self.reduced_robot.model.lowerPositionLimit:", self.model.lowerPositionLimit)
+        print("self.reduced_robot.model.upperPositionLimit:", self.model.upperPositionLimit)
+        self.opti.minimize(1000 * self.totalcost + 0.01 * self.regularization)
+        opts = {
+            'ipopt': {
+                'print_level': 0,
+                'max_iter': 10000,
+                'tol': 1e-4
+            },
+            'print_time': True
+        }
+        self.opti.solver("ipopt", opts)
     def solve(self, qpos, target_pose:pin.SE3):
         """
         求解逆运动学：
@@ -66,49 +104,69 @@ class IKSolver:
             q_init[-1] = q_init[-2]*-1  # 假设第8维为 prismatic 关节，初始为0
         else:
             raise ValueError(f"qpos 维度应为 {nq} 或 {nq - 1}，但收到 {qpos.size}")
-
-        # 构造目标位姿的 CasADi SE3 常量
-        R_casadi = casadi.SX(target_pose.rotation)
-        p_casadi = casadi.SX(target_pose.translation)
-        target_casadi = cpin.SE3(R_casadi, p_casadi)
-        # 创建 CasADi 优化变量
-        opti = casadi.Opti()
-        # 使用 SX 符号变量替代 MX 变量
-        q_sx = casadi.SX.sym('q', nq)  # 改为 SX 类型变量
-        cpin.framesForwardKinematics(self.cmodel, self.cdata, q_sx)
-        # 计算末端当前位姿到目标位姿的相对变换，并取 6D 对数误差
-        err = cpin.log6(self.cdata.oMf[self.frame_id].inverse() * target_casadi).vector
-        reg_coeff = 1e-3
-        cost_sx = casadi.sumsqr(err) + reg_coeff * casadi.sumsqr(q_sx - q_init)
-        cost_func = casadi.Function("cost_func", [q_sx], [cost_sx])
-        q_var = opti.variable(nq)
-        cost = cost_func(q_var)
-        opti.minimize(cost)
-
-        # 关节上下限约束
-        for i in range(nq):
-            opti.subject_to(q_var[i] >= self.lower[i])
-            opti.subject_to(q_var[i] <= self.upper[i])
-        # 初始值
-        opti.set_initial(q_var, q_init)
-        # 选择求解器
-        opti.solver("ipopt")
-        # 尝试求解
+        self.opti.set_initial(self.var_q, q_init)
+        # R_casadi = casadi.SX(target_pose.rotation)
+        # p_casadi = casadi.SX(target_pose.translation)
+        # Target_Pose_casadi = cpin.SE3(R_casadi, p_casadi)
+        # target_pose_Cx= casadi.SX(target_pose)
+        self.opti.set_value(self.param_tf, casadi.DM(target_pose.homogeneous))
         try:
-            sol = opti.solve()
-            if sol.stats()["success"]:
-                q_sol = sol.value(q_var)
-            else:
-                print("IK 求解失败，返回初始关节角")
-                q_sol = q_init
+            sol = self.opti.solve_limited()
+            sol_q = self.opti.value(self.var_q)
+
         except RuntimeError as e:
-            # 求解失败时，输出警告并返回初值
-            print("IK 求解失败，返回初始关节角：", e)
-            # print("当前变量值：", opti.debug.value(q_var))
-            q_sol = q_init
-        # 确保返回的是一维数组
-        joint_ctrl = np.array(q_sol).flatten()
+            print("IK 求解失败：", e)
+            sol_q = q_init.copy()
+        joint_ctrl = np.array(sol_q).flatten()
         return joint_ctrl
+        # # 构造目标位姿的 CasADi SE3 常量
+        # R_casadi = casadi.SX(target_pose.rotation)
+        # p_casadi = casadi.SX(target_pose.translation)
+        # target_casadi = cpin.SE3(R_casadi, p_casadi)
+        # # 创建 CasADi 优化变量
+        # opti = casadi.Opti()
+        # # 使用 SX 符号变量替代 MX 变量
+        # q_sx = casadi.SX.sym('q', nq,1)  # 改为 SX 类型变量
+        # cpin.framesForwardKinematics(self.cmodel, self.cdata, q_sx)
+        # # 计算末端当前位姿到目标位姿的相对变换，并取 6D 对数误差
+        # err = cpin.log6(self.cdata.oMf[self.frame_id].inverse() * target_casadi).vector
+        # reg_coeff = 1e-1
+        # cost_sx = casadi.sumsqr(err) + reg_coeff * casadi.sumsqr(q_sx - q_init)
+        # cost_func = casadi.Function("cost_func", [q_sx], [cost_sx])
+        # q_var = opti.variable(nq)
+        # cost = cost_func(q_var)
+        # opti.minimize(cost)
+        #
+        # # 关节上下限约束
+        # for i in range(nq):
+        #     opti.subject_to(q_var[i] >= self.lower[i])
+        #     opti.subject_to(q_var[i] <= self.upper[i])
+        # # 初始值
+        # opti.set_initial(q_var, q_init)
+        # # 选择求解器
+        # opti.solver("ipopt",{
+        #     'ipopt': {
+        #         'print_level': 0,
+        #         'max_iter': 50,
+        #         'tol': 1e-4
+        #     },
+        #     'print_time': False
+        # })
+        # # 尝试求解
+        # try:
+        #     sol = opti.solve_limited()
+        #     q_sol = sol.value(q_var)
+        #     # else:
+        #     #     print("IK 求解失败，返回初始关节角")
+        #     #     q_sol = q_init
+        # except RuntimeError as e:
+        #     # 求解失败时，输出警告并返回初值
+        #     print("IK 求解失败，返回初始关节角：", e)
+        #     # print("当前变量值：", opti.debug.value(q_var))
+        #     q_sol = q_init
+        # # 确保返回的是一维数组
+        # joint_ctrl = np.array(q_sol).flatten()
+        # return joint_ctrl
     def forward_kinematics(self, q):
 
         if len(q) == 7 and isinstance(q,list):
@@ -321,7 +379,7 @@ class PiperGraspEnv:
 
     def step(self, action=None):
         if action is not None:
-
+            self.q_current = action
             self.mj_data.ctrl = action
 
         mujoco.mj_step(self.mj_model, self.mj_data)
@@ -373,143 +431,26 @@ class PiperGraspEnv:
 
         self.q_current[:6] = q_new
         self.step(self.q_current)
+    def Pose_to_Joint_IK(self,*args):
+        if len(args) == 1 and isinstance(args[0], np.ndarray):
+            target_pose_orin = args[0]
+            target_translation = target_pose_orin[:3,-1]
+            target_rotation = target_pose_orin[:3,:3]
+        elif len(args) == 6:
+            x, y, z, rx, ry, rz = args
+            target_translation = np.array([x, y, z])
+            rot_x = R.from_euler('x', rx, degrees=False).as_matrix()
+            rot_y = R.from_euler('y', ry, degrees=False).as_matrix()
+            rot_z = R.from_euler('z', rz, degrees=False).as_matrix()
+            target_rotation = rot_x @ rot_y @ rot_z
+        else:
+            raise TypeError("Invalid arguments for move_to_position_no_planner")
+        target_pose = pin.SE3(target_rotation, target_translation)
+        q_new = self.ik_solver.solve(self.q_current,target_pose)[:6]
+        q_out = np.concatenate([q_new,np.array([self.q_current[-1]])],axis = 0)
+        return q_out
     def set_piper_qpos(self,q0):
         self.q_current = q0
-    # def move_to_position(self, x, y, z, rx, ry, rz):
-    #     # 平移更新
-    #     self.target_translation = np.array([x, y, z])
-    #
-    #     # 旋转矩阵更新
-    #     rot_x = R.from_euler('x', rx, degrees=False).as_matrix()
-    #     rot_y = R.from_euler('y', ry, degrees=False).as_matrix()
-    #     rot_z = R.from_euler('z', rz, degrees=False).as_matrix()
-    #     self.target_rotation = rot_x @ rot_y @ rot_z
-    #     target_pose = pin.SE3(self.target_rotation, self.target_translation)
-    #     q_new = self.ik_solver.solve(target_pose, self.q_current)
-    #     print(f"Planning a path...")
-    #     q_path = self.ik_solver.planner.plan(self.q_current, q_new)
-    #     if q_path is not None:
-    #         if len(q_path) > 0:
-    #             print(f"Got a path with {len(q_path)} waypoints")
-    #
-    #             def plot_joint_path(q_path):
-    #                 """
-    #                 绘制RRT planner生成的离散关节轨迹点
-    #
-    #                 参数
-    #                 ----
-    #                 q_path : list of array-like
-    #                     每个元素是一个关节位置 array，size=8
-    #                 """
-    #                 q_path = np.array(q_path)  # 转成numpy数组，shape = (N, 8)
-    #                 num_points, num_joints = q_path.shape
-    #                 plt.figure(figsize=(10, 6))
-    #                 for joint_idx in range(num_joints):
-    #                     plt.plot(range(num_points), q_path[:, joint_idx], label=f'Joint {joint_idx + 1}')
-    #
-    #                 plt.xlabel('Waypoint Index')
-    #                 plt.ylabel('Joint Position (rad)')
-    #                 plt.title('RRT Planned Joint Trajectory')
-    #                 plt.legend()
-    #                 plt.grid(True)
-    #                 plt.tight_layout()
-    #                 plt.show()
-    #                 data = self.ik_solver.model.createData()
-    #                 ee_positions = []
-    #                 for q in q_path:
-    #                     ee_pose = self.ik_solver.forward_kinematics(q)
-    #                     ee_positions.append(copy.deepcopy(ee_pose.translation))
-    #                 ee_positions = np.array(ee_positions)  # shape = (N, 3)
-    #                 # 末端轨迹3D绘图
-    #                 fig = plt.figure(figsize=(8, 6))
-    #                 ax = fig.add_subplot(111, projection='3d')
-    #                 ax.plot(ee_positions[:, 0], ee_positions[:, 1], ee_positions[:, 2], marker='o')
-    #
-    #                 ax.set_xlabel('X (m)')
-    #                 ax.set_ylabel('Y (m)')
-    #                 ax.set_zlabel('Z (m)')
-    #                 ax.set_title('End-Effector Trajectory in Cartesian Space')
-    #                 ax.grid(True)
-    #                 plt.tight_layout()
-    #                 plt.show()
-    #             # plot_joint_path(q_path)
-    #             Optim_options = CubicTrajectoryOptimizationOptions(
-    #                 num_waypoints=len(q_path),
-    #                 samples_per_segment=1,
-    #                 min_segment_time=0.5,
-    #                 max_segment_time=10.0,
-    #                 # min_vel=-1.5,
-    #                 # max_vel=1.5,
-    #                 # min_accel=-0.75,
-    #                 # max_accel=0.75,
-    #                 # min_jerk=-1.0,
-    #                 # max_jerk=1.0,
-    #                 max_planning_time=1.0,
-    #                 check_collisions=True,
-    #                 min_collision_dist=0.0,
-    #                 collision_influence_dist=0.02,
-    #                 collision_avoidance_cost_weight=0.0,
-    #                 collision_link_list=[],
-    #             )
-    #             optimizer = CubicTrajectoryOptimization(self.ik_solver.model,
-    #                                                     self.ik_solver.collision_model,
-    #                                                     Optim_options)
-    #
-    #             traj = optimizer.plan(q_path, init_path=q_path)
-    #             # traj = optimizer.plan([q_path[0], q_path[-1]], init_path=q_path)
-    #             if traj is not None:#TODO
-    #                 print("Trajectory optimization successful")
-    #                 traj_gen = traj.generate(0.025)
-    #                 self.q_vec = traj_gen[1]
-    #                 print(f"path has {self.q_vec.shape[1]} points")
-    #                 # 动作控制执行
-    #                 for i in range(self.q_vec.shape[1]):
-    #                     q_target = self.q_vec[:, i]
-    #                     self.step(q_target)
-    #                     time.sleep(0.025)
-    #                 tforms = extract_cartesian_poses(self.ik_solver.model, "grasp_link", self.q_vec.T)
-    #                 positions = []
-    #                 for tform in tforms:
-    #                     position = tform.translation
-    #                     positions.append(position)
-    #                 positions = np.array(positions)
-    #                 # for position in positions:
-    #
-    #                 fig = plt.figure()
-    #                 ax = fig.add_subplot(111, projection='3d')
-    #                 # 绘制位置轨迹
-    #                 ax.plot(positions[:, 0], positions[:, 1], positions[:, 2], marker='o')
-    #                 # 绘制姿态
-    #                 for i, tform in enumerate(tforms):
-    #                     position = tform.translation
-    #                     rotation_matrix = tform.rotation
-    #                     # 提取坐标轴方向的向量
-    #                     x_axis = rotation_matrix[:, 0]
-    #                     y_axis = rotation_matrix[:, 1]
-    #                     z_axis = rotation_matrix[:, 2]
-    #                     # 绘制坐标轴向量
-    #                     ax.quiver(position[0], position[1], position[2],
-    #                               x_axis[0], x_axis[1], x_axis[2], color='r', length=0.01)
-    #                     ax.quiver(position[0], position[1], position[2],
-    #                               y_axis[0], y_axis[1], y_axis[2], color='g', length=0.01)
-    #                     ax.quiver(position[0], position[1], position[2],
-    #                               z_axis[0], z_axis[1], z_axis[2], color='b', length=0.01)
-    #                     # 设置坐标轴标签
-    #                 ax.set_xlabel('X')
-    #                 ax.set_ylabel('Y')
-    #                 ax.set_zlabel('Z')
-    #                 # 显示图形
-    #                 plt.show()
-    #             else:
-    #                 self.q_current = q_new
-    #                 self.step(self.q_current)
-    #
-    #         else:
-    #             print("Failed to plan.")
-    #             self.step()
-    #     else:
-    #         self.q_current = q_new
-    #         self.step(q_new)
 
     def get_joint(self):
         """
@@ -522,10 +463,24 @@ class PiperGraspEnv:
         """
         pose = self.ik_solver.forward_kinematics(self.mj_data.qpos[:8])
         print(pose)
-    def gripper_control(self,gripper_W: float):
-        self.q_current[-1] = gripper_W
-        # self.q_current[-1] = gripper_W
-        self.step(self.q_current)
+    def gripper_control(self,*args):
+        if len(args) == 1 and isinstance(args[0], float):
+            self.q_current[-1] = args
+            self.step(self.q_current)
+        elif len(args) == 1 and isinstance(args[0], bool):
+            if args[0]==True: #open
+                for i in range(1000):
+                    self.q_current[-1] += 0.00003
+                    if self.q_current[-1]>= 0.037:
+                        self.q_current[-1] = 0.037
+                    self.step(self.q_current)
+            else:
+                for i in range(1000):
+                    self.q_current[-1] -= 0.00003
+                    if self.q_current[-1] <= 0:
+                        self.q_current[-1] = 0
+                    self.step(self.q_current)
+            return self.q_current
     def run_circle_trajectory(self, center, radius, angular_speed, duration):
         #TODO
         """
@@ -561,6 +516,28 @@ class PiperGraspEnv:
             self.mj_renderer.close()
         if self.mj_depth_renderer is not None:
             self.mj_depth_renderer.close()
+
+    def trajtory_planner(self,q_init:list,q_goal:list,time:float = 2):
+        parameter = JointParameter(q_init, q_goal)
+        velocity_parameter = QuinticVelocityParameter(time)
+        trajectory_parameter = TrajectoryParameter(parameter, velocity_parameter)
+        planner = TrajectoryPlanner(trajectory_parameter)
+        time_array = [0.0, time]
+        planner_array = [planner]
+        total_time = np.sum(time_array)
+        time_step_num = round(total_time / 0.002) + 1
+        times = np.linspace(0.0, total_time, time_step_num)
+        time_cumsum = np.cumsum(time_array)
+        for timei in times:
+            for j in range(len(time_cumsum)):
+                if timei == 0.0:
+                    break
+                if timei <= time_cumsum[j]:
+                    planner_interpolate = planner_array[j - 1].interpolate(timei - time_cumsum[j - 1])
+                    if isinstance(planner_interpolate, np.ndarray):
+                        joint = planner_interpolate
+                        self.step(joint)
+
 
 if __name__ == '__main__':
     env = PiperGraspEnv()

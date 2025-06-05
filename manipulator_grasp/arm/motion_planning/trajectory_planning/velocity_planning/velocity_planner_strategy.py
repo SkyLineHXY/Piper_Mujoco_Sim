@@ -1,6 +1,6 @@
 from abc import ABC
 
-from arm.interface import Strategy, Parameter
+from manipulator_grasp.arm.interface import Strategy, Parameter
 
 
 class VelocityPlannerStrategy(Strategy, ABC):

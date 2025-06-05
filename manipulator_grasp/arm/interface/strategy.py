@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Type
 
-from arm.utils import ClassUtils
+from manipulator_grasp.arm.utils import ClassUtils
 from . import Parameter
 
 from .register import Register

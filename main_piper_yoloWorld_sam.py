@@ -215,20 +215,19 @@ def execute_grasp(env:piper_grasp_env.PiperGraspEnv, gg:GraspGroup):
     T_co = sm.SE3.Trans(gg.translations[0]) * sm.SE3(sm.SO3.TwoVectors(x=gg.rotation_matrices[0][:, 0], y=gg.rotation_matrices[0][:, 1]))
 
     #机器人基坐标系在世界坐标系的位姿
-    t_wr = np.array([1,0.6,0.745])
+    t_wr = np.array([0.94,0.6,0.745])
     n_wr =np.array([1,0,0])
     o_wr =np.array([0,1,0])
     T_wr = sm.SE3.Trans(t_wr) * sm.SE3(sm.SO3.TwoVectors(x=n_wr, y=o_wr))
     T_wr_inv = T_wr.inv()
     #T_base^gg=T_world^cam *T_cam^gg*T_base^world
     T_bo = T_wr_inv * T_wc * T_co * sm.SE3.Rz(np.pi / 2) * sm.SE3.Rx(np.pi / 2) * sm.SE3.Rz(-np.pi / 2)
-    action = np.zeros(7)
 
     # 1.机器人运动到预抓取位姿
     # 目标：将机器人从当前位置移动到预抓取姿态（q1）
     time1 = 2
     q0 = env.get_joint()
-    q1 = np.array([0.0,1.2027,-1.326217,-0.0,1.631054,-0.00894,gripper_maxW])
+    q1 = np.array([0.0,1.2027,-1.326217,0.1,1.131054,0.10894,gripper_maxW])
 
     parameter0 = JointParameter(q0, q1)
     velocity_parameter0 = QuinticVelocityParameter(time1)
@@ -249,136 +248,42 @@ def execute_grasp(env:piper_grasp_env.PiperGraspEnv, gg:GraspGroup):
                 if isinstance(planner_interpolate, np.ndarray):
                     joint = planner_interpolate
                     env.step(joint)
-    time2 = 1
     env.set_piper_qpos(q1)
-    T1 = env.ik_solver.forward_kinematics(q1.tolist())
-    T1 = sm.SE3(T1.homogeneous)
-    # T1 = sm.SE3(T1.rotation,T1.translation)
+    #预抓取动作
     T2 = T_bo * sm.SE3(0.0, 0.0, -0.1)
-    # T2 = T_bo
-    position_parameter1 = LinePositionParameter(T1.t, T2.t)  # 位置规划（直线路径）
-    attitude_parameter1 = OneAttitudeParameter(sm.SO3(T1.R), sm.SO3(T2.R))  # 姿态规划（插值旋转）
-    cartesian_parameter1 = CartesianParameter(position_parameter1, attitude_parameter1)  # 组合笛卡尔参数
-    velocity_parameter1 = QuinticVelocityParameter(time2)  # 速度曲线（五次多项式插值）
-    trajectory_parameter1 = TrajectoryParameter(cartesian_parameter1, velocity_parameter1) # 将笛卡尔空间路径和速度曲线结合，生成完整的轨迹参数
-    planner2 = TrajectoryPlanner(trajectory_parameter1) # 轨迹规划器，将笛卡尔空间路径和速度曲线结合，生成完整的轨迹参数
-    # 执行planner_array = [planner2]
-    time_array = [0.0, time2]
-    planner_array = [planner2]
-    total_time = np.sum(time_array)
-    time_step_num = round(total_time / 0.002) + 1
-    times = np.linspace(0.0, total_time, time_step_num)
-    for timei in times:
-        for j in range(len(time_cumsum)):
-            if timei == 0.0:
-                break
-            if timei <= time_cumsum[j]:
-                planner_interpolate = planner_array[j - 1].interpolate(timei - time_cumsum[j - 1])
-                if isinstance(planner_interpolate, np.ndarray):
-                    joint = planner_interpolate
-                    env.step(joint)
-                else:
-                    env.move_to_position_no_planner(planner_interpolate.A)
-                    # joint = robot.get_joint()
-                # action[:6] = joint
-                # env.step(action)
-                break
+    env.set_piper_qpos(q1)
+    q2=env.Pose_to_Joint_IK(T2.A)
+    env.trajtory_planner(q_init=q1,q_goal=q2)
     # 3.执行抓取
-    # 目标：从 T2 移动到 T3（精确抓取位姿）。通过逐步增加 action[-1]（夹爪控制信号）闭合夹爪，抓取物体。
-    time3 = 1
     T3 = T_bo
-    position_parameter2 = LinePositionParameter(T2.t, T3.t)
-    attitude_parameter2 = OneAttitudeParameter(sm.SO3(T2.R), sm.SO3(T3.R))
-    cartesian_parameter2 = CartesianParameter(position_parameter2, attitude_parameter2)
-    velocity_parameter2 = QuinticVelocityParameter(time3)
-    trajectory_parameter2 = TrajectoryParameter(cartesian_parameter2, velocity_parameter2)
-    planner3 = TrajectoryPlanner(trajectory_parameter2)
-    time_array = [0.0, time3]
-    planner_array = [planner3]
-    total_time = np.sum(time_array)
-    time_step_num = round(total_time / 0.002) + 1
-    times = np.linspace(0.0, total_time, time_step_num)
-    time_cumsum = np.cumsum(time_array)
-    for timei in times:
-        for j in range(len(time_cumsum)):
-            if timei == 0.0:
-                break
-            if timei <= time_cumsum[j]:
-                planner_interpolate = planner_array[j - 1].interpolate(timei - time_cumsum[j - 1])
-                if isinstance(planner_interpolate, np.ndarray):
-                    joint = planner_interpolate
-                    env.step(joint)
-                else:
-                    env.move_to_position_no_planner(planner_interpolate.A)
-                break
-    #执行抓取动作
-    gripper_W = gripper_maxW
-    for i in range(1000):
-        gripper_W -= 0.00003
-        if gripper_W <= 0.0:
-            gripper_W = 0
-
-        # gripper_W = np.max(gripper_W, np.max(gg.widths*gripper_maxW))
-        env.gripper_control(gripper_W)
-
+    env.set_piper_qpos(q2)
+    q3 = env.Pose_to_Joint_IK(T3.A)
+    env.trajtory_planner(q_init=q2,q_goal=q3)
+    #夹爪闭合
+    q3 = env.gripper_control(False)
     # 4.提起物体
-    # 目标：抓取后垂直提升物体（避免碰撞桌面）。
-    time4 = 1
-    T4 = sm.SE3.Trans(0.0, 0.0, 0.2) * T3 # 通过在T3的基础上向上偏移0.3单位得到的，用于控制机器人上升一定的高度
-    position_parameter3 = LinePositionParameter(T3.t, T4.t)
-    attitude_parameter3 = OneAttitudeParameter(sm.SO3(T3.R), sm.SO3(T4.R))
-    cartesian_parameter3 = CartesianParameter(position_parameter3, attitude_parameter3)
-    velocity_parameter3 = QuinticVelocityParameter(time4)
-    trajectory_parameter3 = TrajectoryParameter(cartesian_parameter3, velocity_parameter3)
-    planner4 = TrajectoryPlanner(trajectory_parameter3)
-
+    T4 = T_bo * sm.SE3(0.0, 0.0, -0.3)
+    # env.set_piper_qpos(q3)
+    q4 =env.Pose_to_Joint_IK(T4.A)
+    env.trajtory_planner(q_init=q3,q_goal=q4)
     # 5.水平移动物体
-    # 目标：将物体水平移动到目标放置位置，保持高度不变。
-    time5 = 1
-    T5 = sm.SE3.Trans(0.4,-0.4, T4.t[2]) * sm.SE3(sm.SO3(T4.R)) #  通过在T4的基础上进行平移得到，这里的1.4, 0.3是场景中的固定点坐标，而不是偏移量
-    position_parameter4 = LinePositionParameter(T4.t, T5.t)
-    attitude_parameter4 = OneAttitudeParameter(sm.SO3(T4.R), sm.SO3(T5.R))
-    cartesian_parameter4 = CartesianParameter(position_parameter4, attitude_parameter4)
-    velocity_parameter4 = QuinticVelocityParameter(time5)
-    trajectory_parameter4 = TrajectoryParameter(cartesian_parameter4, velocity_parameter4)
-    planner5 = TrajectoryPlanner(trajectory_parameter4)
-
+    T5 = sm.SE3.Trans(0.0,-0.4,T4.t[2]) * sm.SE3(sm.SO3(T4.R))
+    # env.set_piper_qpos(q4)
+    q5 = env.Pose_to_Joint_IK(T5.A)
+    env.trajtory_planner(q_init=q4,q_goal=q5)
     # 6.放置物体
     # 目标：垂直下降物体到接触面（T7）。逐步减小 action[-1]（夹爪信号）以释放物体。
-    time6 = 1
-    T6 = sm.SE3.Trans(0.0, 0.0, -0.1) * T5 # 通过在T5的基础上向下偏移0.1单位得到的，用于控制机器人下降一定的高度
-    position_parameter6 = LinePositionParameter(T5.t, T6.t)
-    attitude_parameter6 = OneAttitudeParameter(sm.SO3(T5.R), sm.SO3(T6.R))
-    cartesian_parameter6 = CartesianParameter(position_parameter6, attitude_parameter6)
-    velocity_parameter6 = QuinticVelocityParameter(time6)
-    trajectory_parameter6 = TrajectoryParameter(cartesian_parameter6, velocity_parameter6)
-    planner6 = TrajectoryPlanner(trajectory_parameter6)
+    T6 = sm.SE3.Trans(0.0, 0.0, -0.1) * T5  # 通过在T5的基础上向下偏移0.1单位得到的，用于控制机器人下降一定的高度
+    q6 = env.Pose_to_Joint_IK(T6.A)
+    env.trajtory_planner(q_init=q5,q_goal=q6)
+    q6 = env.gripper_control(True)
+    # 7.预先复位阶段
+    T7 = T5  # 通过在T5的基础上向下偏移0.1单位得到的，用于控制机器人下降一定的高度
+    q7 = env.Pose_to_Joint_IK(T7.A)
+    env.trajtory_planner(q_init=q6,q_goal=q7)
+    #8.动作复位
+    env.trajtory_planner(q_init=q7,q_goal=q1)
 
-    # # 执行planner_array = [planner4, planner5, planner6]
-    # time_array = [0.0, time4, time5, time6]
-    time_array = [0.0,time4]
-    planner_array = [planner4]
-    # planner_array = [planner4, planner5, planner6]
-    total_time = np.sum(time_array)
-    time_step_num = round(total_time / 0.002) + 1
-    times = np.linspace(0.0, total_time, time_step_num)
-    time_cumsum = np.cumsum(time_array)
-    for timei in times:
-        for j in range(len(time_cumsum)):
-            if timei == 0.0:
-                break
-            if timei <= time_cumsum[j]:
-                planner_interpolate = planner_array[j - 1].interpolate(timei - time_cumsum[j - 1])
-                if isinstance(planner_interpolate, np.ndarray):
-                    joint = planner_interpolate
-                    env.step(joint)
-                else:
-                    env.move_to_position_no_planner(planner_interpolate.A)
-                # action[:6] = joint
-                # env.step(action)
-                break
-    # for i in range(500):  # 1000
-    #     env.step()
 if __name__ == '__main__':
     env = piper_grasp_env.PiperGraspEnv()
     env.reset()
@@ -406,11 +311,3 @@ if __name__ == '__main__':
             # 5. 仿真执行抓取
             execute_grasp(env, gg)
     env.close()
-    # net = get_net()
-    # env = piper_grasp_env.PiperGraspEnv()
-    # env.reset()
-    # for i in range(1000):
-    #     env.step()
-    # imgs = env.render()
-    # gg = generate_grasps(net, imgs, True)
-    # robot = env.ik_solver

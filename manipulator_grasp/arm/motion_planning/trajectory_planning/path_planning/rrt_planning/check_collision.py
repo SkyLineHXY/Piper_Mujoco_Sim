@@ -2,7 +2,7 @@ import copy
 from typing import Union, List, Tuple
 import multiprocessing
 
-from arm.geometry import LineSegment, Collision
+from manipulator_grasp.arm.geometry import LineSegment, Collision
 
 from .i_check_collision import ICheckCollision
 
