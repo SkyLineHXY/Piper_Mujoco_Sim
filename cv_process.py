@@ -141,7 +141,7 @@ def segment_image(image_path, output_mask='mask1.png'):
         print(f"Auto-selected {best_det['cls']} with confidence {best_det['conf']:.2f}")
     else:
         # 手动点击
-        print("No detections - click on target object")
+        # print("No detections - click on target object")
         cv2.imshow('Select Object', vis_img)
 
         # 初始化全局变量
@@ -150,11 +150,11 @@ def segment_image(image_path, output_mask='mask1.png'):
         def click_handler(event, x, y, flags, param):
             nonlocal clicked
             if event == cv2.EVENT_LBUTTONDOWN:
-                print(f"Clicked at ({x}, {y})")
+                # print(f"Clicked at ({x}, {y})")
                 point.extend([x, y])
                 clicked = True  # 标记点击完成
         cv2.setMouseCallback('Select Object', click_handler)
-        print("Waiting for user click...")
+        # print("Waiting for user click...")
         # 循环等待点击或ESC键
         while not clicked:
             key = cv2.waitKey(10)  # 10ms延迟，减少CPU占用

@@ -2,15 +2,9 @@ import os.path
 import sys
 from manipulator_grasp.arm.motion_planning import *
 
-# import mujoco_py
-import spatialmath as sm
 import time
-from multipledispatch import dispatch
-# from mujoco_py import load_model_from_path, MjSim
-from manipulator_grasp.arm.geometry import SE3Impl
 import numpy as np
 import casadi
-import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 import mujoco
 import mujoco.viewer
@@ -120,53 +114,6 @@ class IKSolver:
         joint_ctrl = np.array(sol_q).flatten()
         return joint_ctrl
         # # 构造目标位姿的 CasADi SE3 常量
-        # R_casadi = casadi.SX(target_pose.rotation)
-        # p_casadi = casadi.SX(target_pose.translation)
-        # target_casadi = cpin.SE3(R_casadi, p_casadi)
-        # # 创建 CasADi 优化变量
-        # opti = casadi.Opti()
-        # # 使用 SX 符号变量替代 MX 变量
-        # q_sx = casadi.SX.sym('q', nq,1)  # 改为 SX 类型变量
-        # cpin.framesForwardKinematics(self.cmodel, self.cdata, q_sx)
-        # # 计算末端当前位姿到目标位姿的相对变换，并取 6D 对数误差
-        # err = cpin.log6(self.cdata.oMf[self.frame_id].inverse() * target_casadi).vector
-        # reg_coeff = 1e-1
-        # cost_sx = casadi.sumsqr(err) + reg_coeff * casadi.sumsqr(q_sx - q_init)
-        # cost_func = casadi.Function("cost_func", [q_sx], [cost_sx])
-        # q_var = opti.variable(nq)
-        # cost = cost_func(q_var)
-        # opti.minimize(cost)
-        #
-        # # 关节上下限约束
-        # for i in range(nq):
-        #     opti.subject_to(q_var[i] >= self.lower[i])
-        #     opti.subject_to(q_var[i] <= self.upper[i])
-        # # 初始值
-        # opti.set_initial(q_var, q_init)
-        # # 选择求解器
-        # opti.solver("ipopt",{
-        #     'ipopt': {
-        #         'print_level': 0,
-        #         'max_iter': 50,
-        #         'tol': 1e-4
-        #     },
-        #     'print_time': False
-        # })
-        # # 尝试求解
-        # try:
-        #     sol = opti.solve_limited()
-        #     q_sol = sol.value(q_var)
-        #     # else:
-        #     #     print("IK 求解失败，返回初始关节角")
-        #     #     q_sol = q_init
-        # except RuntimeError as e:
-        #     # 求解失败时，输出警告并返回初值
-        #     print("IK 求解失败，返回初始关节角：", e)
-        #     # print("当前变量值：", opti.debug.value(q_var))
-        #     q_sol = q_init
-        # # 确保返回的是一维数组
-        # joint_ctrl = np.array(q_sol).flatten()
-        # return joint_ctrl
     def forward_kinematics(self, q):
 
         if len(q) == 7 and isinstance(q,list):
@@ -288,14 +235,6 @@ class IKOptimizer:
             if max_diff > 15.0 / 180.0 * 3.1415:
                 # print("Excessive changes in joint angle:", max_diff)
                 self.init_data = np.zeros(8)
-            # print("max_diff:", max_diff)
-            # q = sol_q
-            # if max_diff > 30.0/180.0*3.1415:
-            #     # print("Excessive changes in joint angle:", max_diff)
-            #     self.init_data = np.zeros(8)
-            # else:
-            #     self.init_data = sol_q
-            # self.q_current = sol_q
         except Exception as e:
             print(f"ERROR in convergence, plotting debug info.{e}")
             return sol_q, '', False
@@ -384,30 +323,6 @@ class PiperGraspEnv:
 
         mujoco.mj_step(self.mj_model, self.mj_data)
         self.mj_viewer.sync()
-
-    # @overload
-    # def move_to_position_no_planner(self, target_pose:SE3Impl)-> None:
-    #     target_translation = target_pose.A[:3][-1]
-    #     target_rotation = target_pose.A[:3][:3]
-    #     target_pose = pin.SE3(target_rotation, target_translation)
-    #     q_new = self.ik_solver.solve(target_pose, self.q_current)
-    #     self.q_current = q_new
-    #     self.step(self.q_current)
-    #
-    # @overload
-    # def move_to_position_no_planner(self, x:float, y:float, z:float, rx:float, ry:float, rz:float):
-    #     # 平移更新
-    #     self.target_translation = np.array([x, y, z])
-    #
-    #     # 旋转矩阵更新
-    #     rot_x = R.from_euler('x', rx, degrees=False).as_matrix()
-    #     rot_y = R.from_euler('y', ry, degrees=False).as_matrix()
-    #     rot_z = R.from_euler('z', rz, degrees=False).as_matrix()
-    #     self.target_rotation = rot_x @ rot_y @ rot_z
-    #     target_pose = pin.SE3(self.target_rotation, self.target_translation)
-    #     q_new = self.ik_solver.solve(target_pose, self.q_current)
-    #     self.q_current = q_new
-    #     self.step(self.q_current)
 
     def move_to_position_no_planner(self, *args):
         if len(args) == 1 and isinstance(args[0], np.ndarray):
@@ -544,8 +459,5 @@ if __name__ == '__main__':
     env.reset()
     while True:
         env.step()
-    # env.get_end_pose()
-    # env.run_circle_trajectory([0.3,0.2,0.3],0.1,0.1,100)
-    # env.run_line_trajectory([0.35, 0.3, 0.3],[0.25, 0.0, 0.3],0.05,20)
     env.close()
 

@@ -148,7 +148,7 @@ def generate_grasps(end_points, cloud, visual=False):
     gg = GraspGroup(grasp_preds[0].detach().cpu().numpy())
 
     # 3. 碰撞检测
-    COLLISION_THRESH = 0.01
+    COLLISION_THRESH = 0.05
     if COLLISION_THRESH > 0:
         voxel_size = 0.01
         collision_thresh = 0.01
@@ -162,7 +162,7 @@ def generate_grasps(end_points, cloud, visual=False):
     # 将 gg 转换为普通列表
     all_grasps = list(gg)
     vertical = np.array([0, 0, 1])  # 期望抓取接近方向（垂直桌面） np.array([0, 0, 1])
-    angle_threshold = np.deg2rad(20)  # 30度的弧度值 np.deg2rad(30)
+    angle_threshold = np.deg2rad(30)  # 30度的弧度值 np.deg2rad(30)
     filtered = []
     for grasp in all_grasps:
         # 抓取的接近方向取 grasp.rotation_matrix 的第三列[:, 0]
@@ -174,7 +174,7 @@ def generate_grasps(end_points, cloud, visual=False):
         if angle < angle_threshold:
             filtered.append(grasp)
     if len(filtered) == 0:
-        print("\n[Warning] No grasp predictions within vertical angle threshold. Using all predictions.")
+        # print("\n[Warning] No grasp predictions within vertical angle threshold. Using all predictions.")
         return None
     else:
         filtered.sort(key=lambda g: g.score, reverse=True)
@@ -196,17 +196,17 @@ def generate_grasps(end_points, cloud, visual=False):
         return new_gg
 
 # ================= 仿真执行抓取动作 ====================
-def execute_grasp(env:piper_grasp_env.PiperGraspEnv, gg:GraspGroup):
+def execute_grasp(env:piper_grasp_env.PiperGraspEnv,gg:GraspGroup):
     """
     执行抓取动作，控制机器人从初始位置移动到抓取位置，并完成抓取操作。
 
     参数:
-    env (UR5GraspEnv): 机器人环境对象。
-    gg (GraspGroup): 抓取预测结果。
+        env (UR5GraspEnv): 机器人环境对象。
+        gg (GraspGroup): 抓取预测结果。
     """
     # 0.初始准备阶段
     gripper_maxW = 0.038
-    gripper_minW = 0.0
+    # gripper_minW = 0.0
     # 目标：计算抓取位姿 T_wo（物体相对于世界坐标系的位姿）
     n_wc = np.array([0.0, -1.0, 0.0])
     o_wc = np.array([-1.0, 0.0, -0.5])
@@ -227,8 +227,8 @@ def execute_grasp(env:piper_grasp_env.PiperGraspEnv, gg:GraspGroup):
     # 目标：将机器人从当前位置移动到预抓取姿态（q1）
     time1 = 2
     q0 = env.get_joint()
-    q1 = np.array([0.0,1.2027,-1.326217,0.1,1.131054,0.10894,gripper_maxW])
-
+    # q1 = np.array([0.0,1.2027,-1.326217,0.0,1.131054,0.10894,gripper_maxW])
+    q1 = np.array([0.0, 0.644, -0.62,0.1, 0.57, 0, gripper_maxW])
     parameter0 = JointParameter(q0, q1)
     velocity_parameter0 = QuinticVelocityParameter(time1)
     trajectory_parameter0 = TrajectoryParameter(parameter0, velocity_parameter0)
@@ -301,7 +301,7 @@ if __name__ == '__main__':
         # 3. 获取物体的点云数据
         end_points, cloud_o3d = get_and_process_data(color_img_path, depth_img_path, mask_img_path)
         # 4. 获取抓取点对应的夹爪姿态
-        gg = generate_grasps(end_points, cloud_o3d, True) # True or False
+        gg = generate_grasps(end_points, cloud_o3d, False) # True or False
         if gg is None:
             print('no grasps pose')
         else:
