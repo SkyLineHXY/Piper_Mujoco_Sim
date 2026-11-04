@@ -1,12 +1,7 @@
 # Piper\_Mujoco\_Sim
----
 
 ## Overview / 项目简介
-
-
 本仓库为“基于多核 AMP 通信的人机交互机械臂系统”这个作品的核心代码
-
----
 
 ## Repository Layout / 目录结构
 
